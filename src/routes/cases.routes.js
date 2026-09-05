@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 
 const Case = require('../models/Case');
@@ -9,6 +10,29 @@ const forensicsService = require('../services/forensicsService');
 // All case routes require authentication; analysts can view/investigate,
 // but confirm + report are gated to admin below via requireRole('admin').
 router.use(verifyJWT);
+
+/**
+ * validateObjectId
+ * Every route below takes :id and passes it straight to Mongoose's
+ * findById. A malformed id (anything that isn't a 24-char hex ObjectId —
+ * e.g. a frontend-generated display label like "CASE-8841" instead of the
+ * real database _id) throws a CastError that, left uncaught, fails the
+ * request ungracefully before any response (including CORS headers) is
+ * properly sent — which shows up in the browser as a confusing "blocked by
+ * CORS policy" error that has nothing to do with CORS. This middleware
+ * catches that case upfront with a clear 400 instead.
+ */
+function validateObjectId(req, res, next) {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({
+      error: 'INVALID_ID',
+      message: `"${req.params.id}" is not a valid case id. Expected a 24-character database id, not a display label.`
+    });
+  }
+  next();
+}
+
+router.use('/:id', validateObjectId);
 
 /**
  * GET /api/cases
@@ -39,9 +63,13 @@ router.get('/', requireRole('admin', 'analyst'), async (req, res) => {
  * Roles: admin, analyst
  */
 router.get('/:id', requireRole('admin', 'analyst'), async (req, res) => {
-  const caseDoc = await Case.findById(req.params.id);
-  if (!caseDoc) return res.status(404).json({ error: 'NOT_FOUND', message: 'Case not found' });
-  res.json({ data: caseDoc });
+  try {
+    const caseDoc = await Case.findById(req.params.id);
+    if (!caseDoc) return res.status(404).json({ error: 'NOT_FOUND', message: 'Case not found' });
+    res.json({ data: caseDoc });
+  } catch (err) {
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Could not fetch case' });
+  }
 });
 
 /**
@@ -129,25 +157,29 @@ router.post('/:id/report', requireRole('admin'), async (req, res) => {
  * rather than needing a separate DELETE endpoint.
  */
 router.post('/:id/flag', requireRole('admin', 'analyst'), async (req, res) => {
-  const caseDoc = await Case.findById(req.params.id);
-  if (!caseDoc) return res.status(404).json({ error: 'NOT_FOUND', message: 'Case not found' });
+  try {
+    const caseDoc = await Case.findById(req.params.id);
+    if (!caseDoc) return res.status(404).json({ error: 'NOT_FOUND', message: 'Case not found' });
 
-  const shouldFlag = req.body.flagged !== false; // default true unless explicitly false
+    const shouldFlag = req.body.flagged !== false; // default true unless explicitly false
 
-  caseDoc.flagged = shouldFlag;
-  caseDoc.flag_reason = shouldFlag ? req.body.reason || null : null;
-  caseDoc.flagged_by = shouldFlag ? req.user.id : null;
-  caseDoc.flagged_at = shouldFlag ? new Date() : null;
+    caseDoc.flagged = shouldFlag;
+    caseDoc.flag_reason = shouldFlag ? req.body.reason || null : null;
+    caseDoc.flagged_by = shouldFlag ? req.user.id : null;
+    caseDoc.flagged_at = shouldFlag ? new Date() : null;
 
-  caseDoc.timeline.push({
-    stage: shouldFlag ? 'flagged' : 'unflagged',
-    actor: req.user.id,
-    summary: shouldFlag ? `Flagged for review${req.body.reason ? `: ${req.body.reason}` : ''}` : 'Flag cleared',
-    at: new Date()
-  });
+    caseDoc.timeline.push({
+      stage: shouldFlag ? 'flagged' : 'unflagged',
+      actor: req.user.id,
+      summary: shouldFlag ? `Flagged for review${req.body.reason ? `: ${req.body.reason}` : ''}` : 'Flag cleared',
+      at: new Date()
+    });
 
-  await caseDoc.save();
-  res.json({ data: caseDoc });
+    await caseDoc.save();
+    res.json({ data: caseDoc });
+  } catch (err) {
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Could not update flag' });
+  }
 });
 
 module.exports = router;
