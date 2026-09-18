@@ -12,6 +12,8 @@ const casesRoutes = require('./routes/cases.routes');
 const reportersRoutes = require('./routes/reporters.routes');
 
 const app = express();
+app.disable('etag');
+
 
 connectDB();
 
