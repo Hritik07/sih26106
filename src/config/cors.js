@@ -1,22 +1,26 @@
 const cors = require('cors');
 
-// FRONTEND_URL: the Vercel-deployed dashboard/report UI (fixed, always allowlisted exactly).
+// FRONTEND_URL: kept for backward compatibility — the primary frontend URL.
 // LOCAL_FRONTEND_URL: optional, for local frontend dev (e.g. Vite's default
-// http://localhost:5173) — only set this in your own .env, never commit a
-// real one, since it's meant to vary per developer's local setup.
-// EXTENSION_ORIGIN: chrome-extension://<packed-extension-id> — optional, exact-match
-// allowlist entry, useful once you have a published/fixed extension ID.
+// http://localhost:5173).
+// ALLOWED_ORIGINS: comma-separated list of any ADDITIONAL origins to trust —
+// this is what you update when the frontend gets a new custom domain, a new
+// Vercel preview URL, or www/non-www variants, WITHOUT needing to guess
+// which single env var slot to change. Example:
+//   ALLOWED_ORIGINS=https://www.mailrakshak.tech,https://mailrakshak.tech,https://sih26106-frontend.vercel.app
+// EXTENSION_ORIGIN: chrome-extension://<packed-extension-id> — optional, exact-match.
 //
-// ALLOW_ANY_EXTENSION_ORIGIN=true (set in .env during development only): any
-// chrome-extension:// origin is accepted, not just EXTENSION_ORIGIN. This exists
-// because unpacked dev-mode extensions get a random ID that changes across
-// machines/reinstalls — but it still only opens the door to Chrome extension
-// origins specifically, never to arbitrary websites the way `origin: true`
-// (reflecting every origin) would. Turn this off for production by leaving
-// the env var unset — then only the exact EXTENSION_ORIGIN is trusted.
-const allowedOrigins = [process.env.FRONTEND_URL, process.env.LOCAL_FRONTEND_URL, process.env.EXTENSION_ORIGIN].filter(
-  Boolean
-);
+// ALLOW_ANY_EXTENSION_ORIGIN=true (development only): any chrome-extension://
+// origin is accepted, not just EXTENSION_ORIGIN — for unpacked dev installs
+// whose ID changes across machines. Never opens the door to non-extension
+// origins the way `origin: true` would.
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.LOCAL_FRONTEND_URL,
+  process.env.EXTENSION_ORIGIN,
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()) : [])
+].filter(Boolean);
+
 const allowAnyExtension = process.env.ALLOW_ANY_EXTENSION_ORIGIN === 'true';
 
 module.exports = cors({
