@@ -19,7 +19,27 @@ app.use(corsMiddleware);
 app.use(express.json({ limit: '5mb' })); // raw .eml payloads can be a few hundred KB
 app.use(morgan('dev'));
 
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'SIH26106-backend' }));
+/**
+ * GET /health
+ * Public status/info endpoint — useful for uptime checks and for quickly
+ * confirming which deployment/config is live. team_name, project_name,
+ * problem_statement, and description are read from env vars rather than
+ * hardcoded, so they can be set/updated without a code change.
+ */
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'SIH26106-backend',
+    team_name: process.env.TEAM_NAME || 'Not set',
+    project_name: process.env.PROJECT_NAME || 'AI-Powered Email Threat Detection, GeoLocation and Forensic Intelligence Platform',
+    problem_statement: process.env.PROBLEM_STATEMENT_ID || 'SIH26106',
+    description:
+      process.env.PROJECT_DESCRIPTION ||
+      'Backend + integration layer for email threat detection, forensic analysis, geolocation enrichment, and reporter-facing threat reporting.',
+    demo_mode: process.env.DEMO_MODE === 'true',
+    time: new Date().toISOString()
+  });
+});
 
 /**
  * GET /api/ping
