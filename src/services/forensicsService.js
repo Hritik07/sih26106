@@ -33,48 +33,17 @@ async function analyzeHeaders(caseDoc, rawEmail, headers) {
     timeout: 30_000
   });
 
-  // Confirmed real shape (from a live successful call): { message_id,
-  // from_address, from_domain, return_path_address, reply_to_address,
-  // spf_result, dkim_result, dmarc_result, relay_path, anomaly_flags,
-  // spoofing_risk_score, risk_band, confidence, score_reasons,
-  // module_status, processing_errors, processed_at }
+  // CONFIRMED real shape (grepped from forensics' actual source code —
+  // corrected from earlier guesses): { message_id, from_address,
+  // from_domain, return_path_address, reply_to_address, spf_result: {result,
+  // checked_domain, checked_ip, explanation}, dkim_result: {result, ...},
+  // dmarc_result: {result, policy, explanation}, relay_path: {hop_count,
+  // hops: [...]}, earliest_trustworthy_ip, anomaly_flags: [{code, severity,
+  // weight, description}], spoofing_risk_score, risk_tier, score_reasons,
+  // processing_errors, processed_at }. NOTE: `.status` fields are actually
+  // `.result`, there is no `confidence` or `module_status` field, and
+  // `risk_band` is actually `risk_tier` — all corrected in Case.js's schema.
   return data;
 }
 
-/**
- * generateFiveStageReport(caseDoc, { format })
- *
- * The report spans all three microservices' output plus confirmation, so
- * the backend assembles the full payload here and asks the forensics
- * service (which already owns PDF-rendering for the header analysis) to
- * render it — rather than duplicating a PDF renderer in Node.
- *
- * Stage order matches Case.timeline: submitted -> detection -> forensics
- * -> enrichment -> confirmed.
- */
-async function generateFiveStageReport(caseDoc, { format = 'pdf' } = {}) {
-  const payload = {
-    caseId: caseDoc._id.toString(),
-    format,
-    stages: {
-      submission: { sender: caseDoc.sender, subject: caseDoc.subject, at: caseDoc.createdAt },
-      detection: caseDoc.detection,
-      forensics: caseDoc.forensics,
-      enrichment: caseDoc.enrichment,
-      confirmation: {
-        confirmedBy: caseDoc.confirmed_by,
-        confirmedAt: caseDoc.confirmed_at,
-        blockchainHash: caseDoc.blockchain_hash,
-        blockchainTxId: caseDoc.blockchain_tx_id,
-        anchoredAt: caseDoc.anchored_at
-      }
-    },
-    timeline: caseDoc.timeline
-  };
-
-  const { data } = await axios.post(`${BASE_URL}/report`, payload, { timeout: 20_000 });
-  // Expected shape: { reportRef, generatedAt }
-  return { reportRef: data.reportRef, generatedAt: new Date(data.generatedAt) };
-}
-
-module.exports = { analyzeHeaders, generateFiveStageReport };
+module.exports = { analyzeHeaders };
