@@ -1,4 +1,4 @@
-// const axios = require('axios');
+const axios = require('axios');
 
 const BASE_URL = process.env.DETECTION_SERVICE_URL; // e.g. https://sih26106-detection.onrender.com
 
