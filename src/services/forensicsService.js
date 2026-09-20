@@ -11,8 +11,15 @@ const BASE_URL = process.env.FORENSICS_SERVICE_URL; // e.g. https://sih26106-for
  * UploadFile) under the field name "file" — NOT a JSON body. Sending the
  * raw email as a JSON string field still 422s even when named correctly,
  * because FastAPI's File(...) dependency only looks at multipart parts.
- * sender/caseId/headers ride along as regular form fields; headers is
- * JSON.stringify'd since multipart fields are plain strings.
+ * sender/caseId ride along as regular form fields.
+ *
+ * The `headers` parameter (our own crude regex-parsed header object from
+ * normalizeInput.js) is INTENTIONALLY no longer sent — real-pipeline
+ * requests that included it got back responses missing spf_result/
+ * dkim_result/dmarc_result entirely, while the debug route's identical
+ * test (which never sent this field) got a full response. Forensics parses
+ * the raw file itself; sending our own parsed headers alongside it was
+ * redundant at best. Removing it as the most concrete lead to test.
  */
 async function analyzeHeaders(caseDoc, rawEmail, headers) {
   const form = new FormData();
@@ -22,7 +29,6 @@ async function analyzeHeaders(caseDoc, rawEmail, headers) {
   });
   form.append('sender', caseDoc.sender || '');
   if (caseDoc._id) form.append('caseId', caseDoc._id.toString());
-  if (headers) form.append('headers', JSON.stringify(headers));
 
   const { data } = await axios.post(`${BASE_URL}/analyze-headers`, form, {
     headers: form.getHeaders(),
@@ -33,16 +39,10 @@ async function analyzeHeaders(caseDoc, rawEmail, headers) {
     timeout: 30_000
   });
 
-  // CONFIRMED real shape (grepped from forensics' actual source code —
-  // corrected from earlier guesses): { message_id, from_address,
-  // from_domain, return_path_address, reply_to_address, spf_result: {result,
-  // checked_domain, checked_ip, explanation}, dkim_result: {result, ...},
-  // dmarc_result: {result, policy, explanation}, relay_path: {hop_count,
-  // hops: [...]}, earliest_trustworthy_ip, anomaly_flags: [{code, severity,
-  // weight, description}], spoofing_risk_score, risk_tier, score_reasons,
-  // processing_errors, processed_at }. NOTE: `.status` fields are actually
-  // `.result`, there is no `confidence` or `module_status` field, and
-  // `risk_band` is actually `risk_tier` — all corrected in Case.js's schema.
+  // Response shape has been observed to vary across calls — see the
+  // multiple field-name fallbacks in orchestrator.js's readSpfStatus/
+  // readDkimStatus/readDmarcStatus/deriveOriginIp rather than trusting one
+  // fixed shape here.
   return data;
 }
 
