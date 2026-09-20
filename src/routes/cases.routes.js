@@ -1,4 +1,4 @@
-const express = require('express');
+// const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 
@@ -171,7 +171,11 @@ router.post('/:id/confirm', requireRole('admin'), async (req, res) => {
     });
     res.json({ data: anchor.updatedCase });
   } catch (err) {
-    res.status(502).json({ error: 'ANCHORING_FAILED', message: err.message });
+    console.error(`POST /cases/${req.params.id}/confirm failed:`, JSON.stringify(err?.response?.data ?? err?.message ?? err, null, 2));
+    res.status(502).json({
+      error: 'ANCHORING_FAILED',
+      message: err?.response?.data?.detail ?? err?.response?.data?.message ?? err?.message ?? 'Anchoring failed'
+    });
   }
 });
 
