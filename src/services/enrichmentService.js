@@ -37,7 +37,7 @@
 // V2 //
 
 
-console.log('[enrich payload]', JSON.stringify(payload));
+
 const axios = require('axios');
 
 const BASE_URL = process.env.ENRICHMENT_SERVICE_URL; // e.g. https://sih26106-enrichment-service.onrender.com
@@ -82,7 +82,7 @@ async function enrich(caseDoc, originIp) {
     payload.domain = domain;
     payload.sender_domain = domain; // harmless; service ignores it
   }
-
+console.log('[enrich payload]', JSON.stringify(payload));
   const { data } = await axios.post(`${BASE_URL}/enrich`, payload, { timeout: 20_000 });
 
   // Response shape: { geolocation: { status, country, city, isp, latitude,
