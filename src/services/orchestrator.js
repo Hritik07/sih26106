@@ -7,9 +7,11 @@ const campaignClustering = require('./campaignClustering');
  * runAnalysisPipeline(caseDoc)
  *
  * Detection and forensics are independent, so they run in parallel.
- * Enrichment is NOT independent — it needs the origin IP, which forensics
- * now hands us directly via forensics.earliest_trustworthy_ip (CONFIRMED
- * correct field — replaces any hop-array-indexing we used to do ourselves).
+ * Enrichment is NOT independent — it needs an origin IP, derived from
+ * forensics.relay_path via deriveOriginIp() below (CONFIRMED against
+ * forensics' real source — there is no earliest_trustworthy_ip field in
+ * the actual API response, despite an earlier written answer describing
+ * one; that description was for logic that isn't in the deployed code).
  * If forensics fails, enrichment is skipped entirely (no IP to enrich)
  * rather than guessing — the case simply stays in 'analyzing' with
  * enrichment unset, which allStagesComplete() correctly reflects.
@@ -70,50 +72,72 @@ async function runAnalysisPipeline(caseDoc, { rawEmail, headers } = {}) {
 }
 
 /**
- * The forensics service's response shape has changed multiple times
- * underneath us — three genuinely different variants observed so far
- * across this build (original testing, the engineer's written answer, and
- * a live response after that answer was given, which reverted close to the
- * ORIGINAL shape). Rather than keep chasing each change with more schema
- * edits, these helpers try every known field-name variant in order and use
- * whichever one is actually present — so reading forensics data stays
- * correct across whichever shape happens to be live on a given day,
- * without another round of debugging every time it changes again.
+ * Field readers — CONFIRMED against the forensics service's actual source
+ * code (main.py), not inferred from live responses alone. Real top-level
+ * keys are `spf`, `dkim`, `dmarc` (not `spf_result` etc.), each with a
+ * `.status` field (not `.result`). The `spf_result`/`.result` fallbacks
+ * below are kept only as a defensive leftover in case an older/different
+ * deploy is ever live again — the confirmed path is tried first.
  */
 function readSpfStatus(forensics) {
-  return forensics?.spf_result?.result ?? forensics?.spf_result?.status ?? forensics?.spf?.status ?? forensics?.spf?.result;
+  return forensics?.spf?.status ?? forensics?.spf_result?.status ?? forensics?.spf_result?.result;
 }
 function readDkimStatus(forensics) {
-  return forensics?.dkim_result?.result ?? forensics?.dkim_result?.status ?? forensics?.dkim?.status ?? forensics?.dkim?.result;
+  return forensics?.dkim?.status ?? forensics?.dkim_result?.status ?? forensics?.dkim_result?.result;
 }
 function readDmarcStatus(forensics) {
-  return forensics?.dmarc_result?.result ?? forensics?.dmarc_result?.status ?? forensics?.dmarc?.status ?? forensics?.dmarc?.result;
+  return forensics?.dmarc?.status ?? forensics?.dmarc_result?.status ?? forensics?.dmarc_result?.result;
+}
+
+// RFC 1918 / loopback / link-local ranges — CONFIRMED necessary from a real
+// example where relay_path[0] (the outermost/oldest hop) was an internal
+// relay IP (10.90.19.29, Sparkpost's own infra) rather than a public
+// address. The forensics service's own internal origin_ip pick (used to
+// feed its SPF check) does NOT filter these out and isn't even exposed in
+// the API response anyway — so this filtering happens on our side.
+function isPrivateIp(ip) {
+  if (!ip) return true;
+  return (
+    /^10\./.test(ip) ||
+    /^127\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    ip === '::1' ||
+    /^f[cd][0-9a-f]{2}:/i.test(ip) // IPv6 unique local
+  );
 }
 
 /**
  * deriveOriginIp(forensics)
- * Tries the newer top-level earliest_trustworthy_ip field first (per the
- * forensics engineer's written answer); falls back to reading the last
- * entry of a flat relay_path array's from_ip (the shape actually observed
- * live, both originally and again after that answer was given); falls back
- * again to the newer nested {hop_count, hops[].ip} shape in case THAT
- * variant shows up on yet another day. Returns null if none of these are
- * present rather than guessing.
+ *
+ * CONFIRMED from forensics' actual relay_parser.py: relay_path is returned
+ * as a FLAT array, already reordered chronologically — index 0 is the
+ * OLDEST hop (closest to true origin), not the newest. There is no
+ * earliest_trustworthy_ip field in the real API response at all (it was
+ * described in an earlier written answer but doesn't exist in the actual
+ * deployed code — origin_ip is computed internally by forensics but never
+ * surfaced to callers).
+ *
+ * Walks from index 0 forward and returns the first hop with a real,
+ * non-private IP — since the literal first hop can be internal relay
+ * infrastructure (confirmed via a real example: Sparkpost's own 10.x relay
+ * before the actual public sending IP two hops later). Falls back to
+ * hop 0's IP even if private, rather than null, so enrichment still gets
+ * something to try rather than being skipped entirely.
  */
 function deriveOriginIp(forensics) {
-  if (forensics?.earliest_trustworthy_ip) return forensics.earliest_trustworthy_ip;
+  const hops = Array.isArray(forensics?.relay_path) ? forensics.relay_path : [];
+  if (hops.length === 0) return null;
 
-  const flatHops = Array.isArray(forensics?.relay_path) ? forensics.relay_path : null;
-  if (flatHops && flatHops.length > 0) {
-    return flatHops[flatHops.length - 1]?.from_ip || flatHops[flatHops.length - 1]?.ip || null;
+  for (const hop of hops) {
+    const ip = hop?.from_ip;
+    if (ip && !isPrivateIp(ip)) return ip;
   }
 
-  const nestedHops = forensics?.relay_path?.hops;
-  if (Array.isArray(nestedHops) && nestedHops.length > 0) {
-    return nestedHops[0]?.ip || null;
-  }
-
-  return null;
+  // Nothing public found — fall back to the first hop's IP anyway (may be
+  // private/empty; enrichment already handles that gracefully as "unknown").
+  return hops[0]?.from_ip || null;
 }
 
 // Small helper so a single awaited call can be treated the same way as an
