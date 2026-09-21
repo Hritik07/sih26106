@@ -267,6 +267,32 @@ router.post(
 );
 
 /**
+ * POST /api/reporters/:id/reset-limit
+ * Admin-only. Manually clears a specific reporter's daily submission limit
+ * early, without deleting or backdating any of their Case documents.
+ *
+ * Sets Reporter.limitResetAt = now(). reporterDailySubmissionLimit then
+ * only counts Cases created AFTER this timestamp toward the rolling 24h
+ * window — every existing Case still exists and is still visible in the
+ * dashboard/timeline, it just stops counting against this reporter's limit.
+ */
+router.post('/:id/reset-limit', verifyJWT, requireRole('admin'), async (req, res) => {
+  const reporter = await Reporter.findById(req.params.id);
+  if (!reporter) return res.status(404).json({ error: 'NOT_FOUND', message: 'Reporter not found' });
+
+  reporter.limitResetAt = new Date();
+  await reporter.save();
+
+  res.json({
+    data: {
+      reporterId: reporter._id,
+      limitResetAt: reporter.limitResetAt,
+      message: 'Submission limit reset — this reporter can submit again immediately.'
+    }
+  });
+});
+
+/**
  * GET /api/reporters/me/cases
  * Reporter-only. Returns ONLY that reporter's own submissions, each in the
  * same redacted shape as /emails/submit — never the full case object.

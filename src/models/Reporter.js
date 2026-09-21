@@ -24,6 +24,14 @@ const ReporterSchema = new Schema(
     otpPurpose: { type: String, enum: ['signup', 'login', null], default: null },
     otpAttempts: { type: Number, default: 0 }, // failed verify attempts against the current challenge
 
+    // --- Daily submission limit override (admin action) ---
+    // reporterDailySubmissionLimit (middleware/rateLimiter.js) counts this
+    // reporter's own Case documents from the last 24h — there's no separate
+    // counter to reset. Setting this to "now" makes every Case created
+    // BEFORE this timestamp stop counting toward the rolling window, which
+    // effectively resets the limit without deleting any Case history.
+    limitResetAt: { type: Date, default: null },
+
     created_at: { type: Date, default: Date.now }
   },
   { timestamps: false } // created_at is explicit per spec; no updatedAt needed

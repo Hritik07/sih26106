@@ -1,4 +1,5 @@
 const Case = require('../models/Case');
+const Reporter = require('../models/Reporter');
 
 const DEFAULT_DAILY_LIMIT = 8; // within the 5-10/day range from the spec; tune via env
 
@@ -13,6 +14,12 @@ const DEFAULT_DAILY_LIMIT = 8; // within the 5-10/day range from the spec; tune 
  *
  * Counts existing Case documents rather than a separate log collection —
  * one less moving part, and Case already has reporter_id + createdAt.
+ *
+ * Respects Reporter.limitResetAt (set via the admin-only
+ * POST /api/reporters/:id/reset-limit route): any Case created before that
+ * timestamp is excluded from the count, even if it's still inside the 24h
+ * window. This lets an admin manually clear one reporter's limit without
+ * touching their Case history.
  */
 async function reporterDailySubmissionLimit(req, res, next) {
   if (!req.user || req.user.role !== 'reporter') return next(); // not a reporter, nothing to enforce here
@@ -20,9 +27,13 @@ async function reporterDailySubmissionLimit(req, res, next) {
   const limit = Number(process.env.REPORTER_DAILY_LIMIT || DEFAULT_DAILY_LIMIT);
   const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+  const reporter = await Reporter.findById(req.user.id).select('limitResetAt');
+  const effectiveWindowStart =
+    reporter?.limitResetAt && reporter.limitResetAt > windowStart ? reporter.limitResetAt : windowStart;
+
   const recentCases = await Case.find({
     reporter_id: req.user.id,
-    createdAt: { $gte: windowStart }
+    createdAt: { $gte: effectiveWindowStart }
   })
     .sort({ createdAt: 1 })
     .select('createdAt');
