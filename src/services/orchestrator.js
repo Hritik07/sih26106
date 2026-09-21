@@ -41,12 +41,37 @@ async function runAnalysisPipeline(caseDoc, { rawEmail, headers } = {}) {
     caseDoc.timeline.push(timelineEntryFor('forensics', caseDoc.forensics));
 
     const originIp = deriveOriginIp(caseDoc.forensics);
-    console.log('[originIp]', originIp, 'hops:',
-  JSON.stringify(caseDoc.forensics?.relay_path?.map(h => h.from_ip)));
     enrichmentResult = await promiseSettle(enrichmentService.enrich(caseDoc, originIp));
     if (enrichmentResult.status === 'fulfilled') {
       caseDoc.enrichment = enrichmentResult.value;
       caseDoc.timeline.push(timelineEntryFor('enrichment', caseDoc.enrichment));
+
+      // Per-hop relay geolocation — separate call from the main /enrich
+      // above, powers the multi-point relay trace map on the case detail
+      // page instead of just the single derived origin. Best-effort: if it
+      // fails, the rest of enrichment (already assigned above) still
+      // stands; relay_geolocation just stays an empty array.
+      const hopIps = collectRelayHopIps(caseDoc.forensics);
+      if (hopIps.length > 0) {
+        const relayGeoResult = await promiseSettle(enrichmentService.enrichRelayHops(caseDoc, hopIps));
+        if (relayGeoResult.status === 'fulfilled') {
+          // Zip by INDEX, not by ip string — relay_path can contain
+          // duplicate/empty from_ip values, so string-matching would be
+          // ambiguous. enrichRelayHops guarantees results[i] <-> hopIps[i].
+          caseDoc.enrichment.relay_geolocation = relayGeoResult.value.map((r) => ({
+            ip: r.ip,
+            status: r.geolocation?.status,
+            country: r.geolocation?.country ?? null,
+            city: r.geolocation?.city ?? null,
+            isp: r.geolocation?.isp ?? null,
+            latitude: r.geolocation?.latitude ?? null,
+            longitude: r.geolocation?.longitude ?? null
+          }));
+        } else {
+          const reason = relayGeoResult.reason;
+          console.error(`[case ${caseDoc._id}] relay hop geolocation failed:`, JSON.stringify(reason?.response?.data ?? reason?.message ?? reason, null, 2));
+        }
+      }
     } else {
       const reason = enrichmentResult.reason;
       console.error(`[case ${caseDoc._id}] enrichment failed:`, JSON.stringify(reason?.response?.data ?? reason?.message ?? reason, null, 2));
@@ -140,6 +165,22 @@ function deriveOriginIp(forensics) {
   // Nothing public found — fall back to the first hop's IP anyway (may be
   // private/empty; enrichment already handles that gracefully as "unknown").
   return hops[0]?.from_ip || null;
+}
+
+/**
+ * collectRelayHopIps(forensics)
+ *
+ * Unlike deriveOriginIp() above (which picks ONE "best guess" origin IP),
+ * this returns every hop's from_ip, IN ORDER, unfiltered — including
+ * private IPs and empty strings — for the batch relay-geolocation call.
+ * The enrichment service's POST /geoip/batch classifies each entry itself
+ * (private_ip, invalid_input, etc.), so there's deliberately no filtering
+ * here: index i of this array must line up with relay_path[i], and
+ * dropping entries would break that alignment.
+ */
+function collectRelayHopIps(forensics) {
+  const hops = Array.isArray(forensics?.relay_path) ? forensics.relay_path : [];
+  return hops.map((hop) => hop?.from_ip || '');
 }
 
 // Small helper so a single awaited call can be treated the same way as an
