@@ -37,7 +37,7 @@
 // V2 //
 
 
-
+console.log('[enrich payload]', JSON.stringify(payload));
 const axios = require('axios');
 
 const BASE_URL = process.env.ENRICHMENT_SERVICE_URL; // e.g. https://sih26106-enrichment-service.onrender.com

@@ -41,6 +41,8 @@ async function runAnalysisPipeline(caseDoc, { rawEmail, headers } = {}) {
     caseDoc.timeline.push(timelineEntryFor('forensics', caseDoc.forensics));
 
     const originIp = deriveOriginIp(caseDoc.forensics);
+    console.log('[originIp]', originIp, 'hops:',
+  JSON.stringify(caseDoc.forensics?.relay_path?.map(h => h.from_ip)));
     enrichmentResult = await promiseSettle(enrichmentService.enrich(caseDoc, originIp));
     if (enrichmentResult.status === 'fulfilled') {
       caseDoc.enrichment = enrichmentResult.value;
