@@ -17,6 +17,15 @@ const NGROK_HEADERS = { 'ngrok-skip-browser-warning': 'true' };
  * Calls the ML/NLP fraud-detection microservice. The service itself stamps
  * processed_at (its clock, its responsibility) — the orchestrator/route
  * just relays whatever comes back.
+ *
+ * caseInput.body is the ALREADY-EXTRACTED plain-text body (see
+ * utils/extractPlainBody.js, called once in orchestrator.js before this),
+ * NOT the raw MIME source. Confirmed root cause of a real confidence-score
+ * mismatch: raw MIME (headers, boundaries, Content-Transfer-Encoding,
+ * possibly base64 parts) was going into this field unmodified until this
+ * fix, which the model was never trained/tested on — direct /classify
+ * testing on clean text scored the same email 74% legitimate; the real
+ * pipeline, receiving raw MIME, scored it ~92% phishing.
  */
 async function analyze(caseInput) {
   const { data } = await axios.post(
@@ -25,10 +34,8 @@ async function analyze(caseInput) {
       sender: caseInput.sender,
       subject: caseInput.subject,
       // Confirmed via a live 422 from /debug/services: their Pydantic model
-      // wants the field named "body" (loc: ["body", "body"]) — not
-      // "rawEmail". sender/subject are sent too in case their model accepts
-      // them as optional context; harmless if ignored.
-      body: caseInput.rawEmail
+      // wants the field named "body" (loc: ["body", "body"]).
+      body: caseInput.body
     },
     {
       headers: NGROK_HEADERS,
